@@ -1,0 +1,942 @@
+/* ==========================================================================
+   Nyx Player — flat black, square, instrument-panel minimal.
+
+   Deliberate non-goals:
+     - No glass panels, no backdrop blur, no coloured glow, no rounded chrome.
+       The controls are drawn as marks on the picture, not as a widget on top
+       of it.
+     - No transform scaling of the iframe. The frame is laid out at its true
+       pixel box so the video decodes and rasterises 1:1.
+     - No fixed-delay reveal. Opacity of .nyx-cover is driven entirely by the
+       state machine in nyx-player.js.
+   ========================================================================== */
+
+.nyx {
+  /* Palette — monochrome on purpose. One ink, three dilutions. ----------- */
+  --nyx-void: #000;
+  --nyx-ink: #fff;
+  --nyx-ink-dim: rgba(255, 255, 255, 0.46);
+  --nyx-ink-mid: rgba(255, 255, 255, 0.72);
+  --nyx-hairline: rgba(255, 255, 255, 0.12);
+  --nyx-hairline-lit: rgba(255, 255, 255, 0.34);
+  --nyx-rail: rgba(255, 255, 255, 0.16);
+  --nyx-buffer: rgba(255, 255, 255, 0.32);
+
+  /* Geometry — square everywhere. --------------------------------------- */
+  --nyx-bracket: rgba(255, 255, 255, 0.5);
+  --nyx-bracket-inset: 9px;
+  /* Bottom pair is held clear of the control row, so the brackets read as a
+     frame around the picture area rather than colliding with the glyphs. */
+  --nyx-bracket-bottom: 44px;
+  --nyx-bracket-arm: 13px;
+  --nyx-ease: cubic-bezier(0.2, 0, 0, 1);
+  --nyx-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    monospace;
+
+  position: relative;
+  display: block;
+  width: 100%;
+  isolation: isolate;
+  background: transparent;
+  font-family: var(--nyx-mono);
+  color: var(--nyx-ink);
+  -webkit-font-smoothing: antialiased;
+  outline: none;
+}
+
+.nyx.has-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The stage owns the 16:9 box and the picture. No radius, no shadow. ------- */
+.nyx-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--nyx-void);
+  box-shadow: 0 0 0 1px var(--nyx-hairline);
+}
+
+.nyx:focus-visible .nyx-stage {
+  box-shadow: 0 0 0 1px var(--nyx-ink);
+}
+
+/*
+ * Corner brackets. Four L marks floating inside the picture edge — the one
+ * ornament in the whole player, drawn as eight 1px bars so no extra elements
+ * are needed. They register the frame as an instrument viewport.
+ */
+.nyx-stage::after {
+  content: "";
+  position: absolute;
+  inset: var(--nyx-bracket-inset) var(--nyx-bracket-inset)
+    var(--nyx-bracket-bottom);
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0.85;
+  transition: opacity 0.3s ease;
+  --b: linear-gradient(var(--nyx-bracket), var(--nyx-bracket));
+  --h: var(--nyx-bracket-arm) 1px;
+  --v: 1px var(--nyx-bracket-arm);
+  background:
+    var(--b) left top / var(--h) no-repeat,
+    var(--b) left top / var(--v) no-repeat,
+    var(--b) right top / var(--h) no-repeat,
+    var(--b) right top / var(--v) no-repeat,
+    var(--b) left bottom / var(--h) no-repeat,
+    var(--b) left bottom / var(--v) no-repeat,
+    var(--b) right bottom / var(--h) no-repeat,
+    var(--b) right bottom / var(--v) no-repeat;
+}
+
+.nyx.is-ui-hidden .nyx-stage::after {
+  opacity: 0;
+}
+
+/* --------------------------------------------------------------------------
+   URL loader — sits above the 16:9 stage, never inside it.
+   -------------------------------------------------------------------------- */
+.nyx-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.nyx-loader-row {
+  display: flex;
+  gap: 1px;
+  min-width: 0;
+}
+
+.nyx-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--nyx-hairline);
+  background: var(--nyx-void);
+  color: var(--nyx-ink);
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  outline: none;
+  transition: border-color 0.18s ease;
+}
+
+.nyx-url::placeholder {
+  color: var(--nyx-ink-dim);
+}
+
+.nyx-url:hover,
+.nyx-url:focus {
+  border-color: var(--nyx-hairline-lit);
+}
+
+.nyx-load {
+  flex: 0 0 auto;
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--nyx-hairline);
+  background: var(--nyx-void);
+  color: var(--nyx-ink-mid);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.nyx-load:hover {
+  color: var(--nyx-ink);
+  border-color: var(--nyx-hairline-lit);
+}
+
+.nyx-load:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nyx-load:focus-visible,
+.nyx-url:focus-visible {
+  outline: 1px solid var(--nyx-ink);
+  outline-offset: 1px;
+}
+
+.nyx-loader-error {
+  margin: 0;
+  padding: 7px 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--nyx-ink-mid);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.nyx-loader-error[hidden] {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  .nyx-loader-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .nyx-load {
+    width: 100%;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Frame. The YouTube API replaces .nyx-slot with an <iframe>, so the iframe
+   is targeted by element selector rather than by class.
+   -------------------------------------------------------------------------- */
+.nyx-frame {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  display: block;
+  /* Crops the letterbox bars created below. */
+  overflow: hidden;
+}
+
+/*
+ * YouTube anchors its chrome — the title/channel strip, the "Watch on
+ * YouTube" and "Save" affordances, the top and bottom gradients — to the
+ * edges of the *iframe*, not to the edges of the video picture.
+ *
+ * So the iframe is deliberately made taller than 16:9. YouTube preserves the
+ * video's aspect ratio, which means it letterboxes: the picture renders at
+ * exactly the stage size, centred, with a black bar above and below. All of
+ * YouTube's chrome is drawn into those bars. .nyx-frame then crops them away.
+ *
+ * Net effect: the chrome is outside the visible box entirely, and the picture
+ * is still 1:1 and complete. Nothing is scaled and nothing is cut off.
+ *
+ *   height 140%  ->  bar height = (140% - 100%) / 2 = 20% of stage height
+ *   top    -20%  ->  pulls the picture's top edge onto the stage's top edge
+ */
+.nyx-frame > iframe,
+.nyx-slot {
+  position: absolute;
+  left: 0;
+  top: -20%;
+  width: 100%;
+  height: 140%;
+  border: 0;
+  display: block;
+}
+
+.nyx-frame > iframe {
+  /* Every pointer gesture belongs to the Nyx overlay, never to YouTube. */
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Cover curtain. Opaque by default; JS clears .is-masked only once real
+   frames are confirmed on screen.
+   -------------------------------------------------------------------------- */
+.nyx-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  background: var(--nyx-void);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+
+.nyx.is-masked .nyx-cover {
+  opacity: 1;
+}
+
+.nyx-empty-copy {
+  position: relative;
+  z-index: 1;
+  display: none;
+  margin: 0;
+  padding: 0 24px;
+  max-width: 30ch;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--nyx-ink-dim);
+}
+
+.nyx.is-empty .nyx-empty-copy {
+  display: block;
+}
+
+.nyx.is-empty .nyx-dock,
+.nyx.is-empty .nyx-scrim,
+.nyx.is-empty .nyx-shield,
+.nyx.is-empty .nyx-bigplay {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.nyx.is-empty .nyx-gestures {
+  pointer-events: none;
+}
+
+/* --------------------------------------------------------------------------
+   Shield. Covers YouTube-owned chrome the IFrame API cannot actually remove.
+   -------------------------------------------------------------------------- */
+.nyx-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Paused title / avatar strip. */
+.nyx-shield-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 76px;
+  background: linear-gradient(
+    to bottom,
+    var(--nyx-void) 0%,
+    rgba(0, 0, 0, 0.5) 60%,
+    transparent 100%
+  );
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.nyx.is-paused .nyx-shield-top,
+.nyx.is-idle .nyx-shield-top,
+.nyx.is-masked .nyx-shield-top {
+  opacity: 1;
+}
+
+/*
+ * Bottom-right patch. YouTube keeps a watermark / "Watch on YouTube" mark
+ * pinned to the bottom-right of the *picture*, which the frame crop above
+ * cannot reach — it used to be hidden by the old full-width control panel.
+ * With the panel gone it needs its own cover, so this is a corner-anchored
+ * wash: fully opaque exactly where the mark sits, gone within ~170px. Held on
+ * in every state, including playback, because the mark can linger.
+ */
+.nyx-shield-br {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 172px;
+  height: 62px;
+  background: radial-gradient(
+    120% 150% at 100% 100%,
+    var(--nyx-void) 0%,
+    rgba(0, 0, 0, 0.92) 34%,
+    rgba(0, 0, 0, 0.5) 62%,
+    transparent 100%
+  );
+}
+
+/* Big play sits above the iframe so YouTube's own pause glyph is covered. -- */
+.nyx-bigplay {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  padding: 0;
+  border: 1px solid var(--nyx-hairline-lit);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--nyx-ink);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition:
+    opacity 0.22s var(--nyx-ease),
+    border-color 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.nyx.is-idle .nyx-bigplay,
+.nyx.is-paused .nyx-bigplay {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nyx.is-busy .nyx-bigplay,
+.nyx.is-error .nyx-bigplay {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.nyx-bigplay:hover {
+  background: var(--nyx-ink);
+  border-color: var(--nyx-ink);
+  color: var(--nyx-void);
+}
+
+.nyx-bigplay svg {
+  width: 20px;
+  height: 20px;
+  margin-left: 2px; /* optical centring of the triangle */
+}
+
+/* Buffering — a single hairline square, not a ring. ------------------------ */
+.nyx-spinner {
+  position: relative;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--nyx-ink);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.nyx.is-busy .nyx-spinner {
+  opacity: 1;
+  animation: nyx-spin 0.9s steps(8, end) infinite;
+}
+
+@keyframes nyx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Gesture layer — swallows clicks that would otherwise reach the iframe.
+   -------------------------------------------------------------------------- */
+.nyx-gestures {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  cursor: pointer;
+}
+
+/* Bottom scrim. Shallow — just enough to keep the marks legible. */
+.nyx-scrim {
+  position: absolute;
+  inset: auto 0 0 0;
+  z-index: 3;
+  height: 25%;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.78),
+    rgba(0, 0, 0, 0.26) 52%,
+    transparent
+  );
+  opacity: 1;
+  transition: opacity 0.26s ease;
+}
+
+/* --------------------------------------------------------------------------
+   Control dock — no panel. Marks laid directly on the picture.
+   -------------------------------------------------------------------------- */
+.nyx-dock {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 0 12px 10px;
+  border: 0;
+  background: none;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 0.24s var(--nyx-ease),
+    transform 0.24s var(--nyx-ease);
+}
+
+/* Auto-hide: controls and cursor retreat together. */
+.nyx.is-ui-hidden .nyx-dock {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
+.nyx.is-ui-hidden .nyx-scrim {
+  opacity: 0;
+}
+
+.nyx.is-ui-hidden .nyx-gestures {
+  cursor: none;
+}
+
+.nyx-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Buttons — glyph only. Dim at rest, full ink on hover. No pills. --------- */
+.nyx-btn {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--nyx-ink-mid);
+  cursor: pointer;
+  transition: color 0.16s ease;
+}
+
+.nyx-btn:hover {
+  color: var(--nyx-ink);
+}
+
+.nyx-btn:active {
+  color: var(--nyx-ink-dim);
+}
+
+.nyx-btn:focus-visible {
+  outline: 1px solid var(--nyx-ink);
+  outline-offset: -1px;
+}
+
+.nyx-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+/* Play / pause glyph crossfade -------------------------------------------- */
+.nyx-morph {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.nyx-morph svg {
+  position: absolute;
+  inset: 0;
+  transition: opacity 0.14s var(--nyx-ease);
+}
+
+.nyx-morph .nyx-g-pause {
+  opacity: 0;
+}
+
+.nyx-morph .nyx-g-play {
+  opacity: 1;
+}
+
+.nyx.is-playing .nyx-morph .nyx-g-pause {
+  opacity: 1;
+}
+
+.nyx.is-playing .nyx-morph .nyx-g-play {
+  opacity: 0;
+}
+
+/* Timecode ----------------------------------------------------------------- */
+.nyx-time {
+  flex: 0 0 auto;
+  padding: 0 8px 0 6px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--nyx-ink-dim);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.nyx-time b {
+  font-weight: 400;
+  color: var(--nyx-ink);
+}
+
+.nyx-spacer {
+  flex: 1 1 auto;
+}
+
+/* --------------------------------------------------------------------------
+   Scrub bar — a 1px line edge to edge. Square thumb, no growth on the rail
+   itself so the line never shifts the row.
+   -------------------------------------------------------------------------- */
+.nyx-scrub {
+  position: relative;
+  flex: 1 1 auto;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+.nyx-scrub-rail {
+  position: relative;
+  width: 100%;
+  height: 1px;
+  border-radius: 0;
+  background: var(--nyx-rail);
+  overflow: hidden;
+  transition:
+    height 0.14s var(--nyx-ease),
+    background-color 0.14s ease;
+}
+
+.nyx-scrub:hover .nyx-scrub-rail,
+.nyx-scrub:focus-visible .nyx-scrub-rail,
+.nyx-scrub.is-dragging .nyx-scrub-rail {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.26);
+}
+
+.nyx-scrub-buffer,
+.nyx-scrub-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 0;
+  width: 0;
+}
+
+.nyx-scrub-buffer {
+  background: var(--nyx-buffer);
+}
+
+.nyx-scrub-fill {
+  background: var(--nyx-ink);
+}
+
+.nyx-scrub-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 2px;
+  height: 11px;
+  margin-left: -1px;
+  border-radius: 0;
+  background: var(--nyx-ink);
+  transform: translateY(-50%) scaleY(0);
+  transition: transform 0.14s var(--nyx-ease);
+  pointer-events: none;
+}
+
+.nyx-scrub:hover .nyx-scrub-thumb,
+.nyx-scrub:focus-visible .nyx-scrub-thumb,
+.nyx-scrub.is-dragging .nyx-scrub-thumb {
+  transform: translateY(-50%) scaleY(1);
+}
+
+.nyx-scrub:focus-visible .nyx-scrub-rail {
+  background: var(--nyx-ink-dim);
+}
+
+/* Hover time preview ------------------------------------------------------- */
+.nyx-tip {
+  position: absolute;
+  bottom: 17px;
+  /* Centred by default so the bubble contributes no overflow before the
+     first hover; JS then clamps it in px against the rail. */
+  left: 50%;
+  padding: 3px 6px;
+  border: 1px solid var(--nyx-hairline);
+  background: var(--nyx-void);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--nyx-ink);
+  white-space: nowrap;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+
+.nyx-scrub:hover .nyx-tip,
+.nyx-scrub.is-dragging .nyx-tip {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Volume — slider unfurls on hover / keyboard focus
+   -------------------------------------------------------------------------- */
+.nyx-volume {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.nyx-vol-slider {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 14px;
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+  transition:
+    width 0.2s var(--nyx-ease),
+    opacity 0.16s ease,
+    margin 0.2s var(--nyx-ease);
+}
+
+.nyx-volume:hover .nyx-vol-slider,
+.nyx-volume:focus-within .nyx-vol-slider,
+.nyx-vol-slider.is-dragging {
+  width: 56px;
+  opacity: 1;
+  margin-right: 6px;
+}
+
+.nyx-vol-rail {
+  position: relative;
+  width: 100%;
+  height: 1px;
+  border-radius: 0;
+  background: var(--nyx-rail);
+}
+
+.nyx-vol-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  width: 100%;
+  border-radius: 0;
+  background: var(--nyx-ink);
+}
+
+.nyx-vol-thumb {
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 2px;
+  height: 9px;
+  margin-left: -1px;
+  border-radius: 0;
+  background: var(--nyx-ink);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.nyx-vol-slider:focus-visible .nyx-vol-rail {
+  background: var(--nyx-ink-dim);
+}
+
+/* Mute-state glyph swapping */
+.nyx-vol-ico > svg {
+  display: none;
+}
+
+.nyx-vol-ico[data-level="high"] .nyx-i-high,
+.nyx-vol-ico[data-level="low"] .nyx-i-low,
+.nyx-vol-ico[data-level="mute"] .nyx-i-mute {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Playback-rate popover
+   -------------------------------------------------------------------------- */
+.nyx-rate {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.nyx-rate-btn {
+  width: auto;
+  min-width: 30px;
+  padding: 0 6px;
+  font-family: var(--nyx-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
+.nyx-rate-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  min-width: 62px;
+  padding: 0;
+  border: 1px solid var(--nyx-hairline);
+  background: var(--nyx-void);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-50%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.14s var(--nyx-ease),
+    visibility 0.14s;
+}
+
+.nyx-rate.is-open .nyx-rate-menu {
+  opacity: 1;
+  visibility: visible;
+}
+
+.nyx-rate-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--nyx-ink-dim);
+  font: inherit;
+  font-family: var(--nyx-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.13s ease,
+    color 0.13s ease;
+}
+
+.nyx-rate-item + .nyx-rate-item {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.nyx-rate-item:hover {
+  background: var(--nyx-ink);
+  color: var(--nyx-void);
+}
+
+.nyx-rate-item[aria-checked="true"] {
+  color: var(--nyx-ink);
+}
+
+.nyx-rate-item[aria-checked="true"]::after {
+  content: "";
+  width: 3px;
+  height: 3px;
+  background: currentColor;
+}
+
+.nyx-rate-item:focus-visible {
+  outline: 1px solid var(--nyx-ink);
+  outline-offset: -1px;
+}
+
+/* --------------------------------------------------------------------------
+   Fullscreen — edge to edge, no gap.
+   -------------------------------------------------------------------------- */
+.nyx:fullscreen,
+.nyx.is-fullscreen {
+  --nyx-bracket-inset: 16px;
+  --nyx-bracket-bottom: 56px;
+  /* Fixed positioning gives the root a definite size of its own, so the
+     class-only path does not depend on an ancestor having a resolved height.
+     This matches what UA stylesheets already do for :fullscreen. */
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  gap: 0;
+  background: var(--nyx-void);
+}
+
+.nyx:fullscreen .nyx-loader,
+.nyx.is-fullscreen .nyx-loader {
+  display: none;
+}
+
+.nyx:fullscreen .nyx-stage,
+.nyx.is-fullscreen .nyx-stage {
+  /* Fill the display; the embed letterboxes the picture internally. */
+  height: 100%;
+  aspect-ratio: auto;
+  box-shadow: none;
+}
+
+.nyx:fullscreen .nyx-dock,
+.nyx.is-fullscreen .nyx-dock {
+  padding: 0 20px 16px;
+}
+
+.nyx:fullscreen .nyx-fs-ico > svg,
+.nyx.is-fullscreen .nyx-fs-ico > svg {
+  display: none;
+}
+
+.nyx:fullscreen .nyx-fs-ico .nyx-i-fsexit,
+.nyx.is-fullscreen .nyx-fs-ico .nyx-i-fsexit {
+  display: block;
+}
+
+.nyx-fs-ico .nyx-i-fsexit {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Error surface
+   -------------------------------------------------------------------------- */
+.nyx-error {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: none;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  background: var(--nyx-void);
+  color: var(--nyx-ink-dim);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1.6;
+}
+
+.nyx.is-error .nyx-error {
+  display: grid;
+}
+
+/* --------------------------------------------------------------------------
+   Accessibility
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .nyx *,
+  .nyx *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .nyx.is-busy .nyx-spinner {
+    animation: nyx-spin 1.6s steps(8, end) infinite;
+  }
+}
+
+.nyx-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
