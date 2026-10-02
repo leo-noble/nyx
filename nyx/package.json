@@ -1,9 +1,0 @@
-{
-  "name": "nyx-player",
-  "version": "1.0.0",
-  "description": "Custom YouTube player with zero branding",
-  "type": "module",
-  "scripts": {
-    "dev": "python3 -m http.server 3000"
-  }
-}
