@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nyx — visual fixture</title>
+    <link rel="stylesheet" href="../nyx-player.css" />
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 40px;
+        background:
+          radial-gradient(90% 60% at 50% -10%, rgba(184, 169, 255, 0.09), transparent 70%),
+          #06070a;
+      }
+      #player {
+        width: min(900px, 100%);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="player"></div>
+
+    <script>
+      /* Stand-in for the YouTube API. The iframe is filled with a bright,
+         high-contrast frame so the scrim and glass dock can be judged against
+         real-looking picture content rather than flat black. */
+      const PlayerState = { UNSTARTED: -1, ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3, CUED: 5 };
+
+      const FRAME = `
+        <body style="margin:0;height:100vh;background:
+          radial-gradient(60% 80% at 22% 28%, #ffd89b 0%, transparent 55%),
+          radial-gradient(70% 90% at 78% 70%, #7f5af0 0%, transparent 60%),
+          linear-gradient(135deg,#2b1055 0%,#7597de 45%,#f6d365 100%);"></body>`;
+
+      class MockPlayer {
+        constructor(el, cfg) {
+          this.events = cfg.events || {};
+          this.t = 42;
+          this.dur = 213;
+          this.state = PlayerState.PLAYING;
+          this.vol = 70;
+          this.muted = false;
+          this.rate = 1;
+          const f = document.createElement('iframe');
+          f.setAttribute('srcdoc', FRAME);
+          el.replaceWith(f);
+          this.f = f;
+          setTimeout(() => this.events.onReady?.({ target: this }), 0);
+        }
+        getCurrentTime() { return this.t; }
+        getDuration() { return this.dur; }
+        getPlayerState() { return this.state; }
+        getVideoLoadedFraction() { return 0.62; }
+        getVolume() { return this.vol; }
+        setVolume(v) { this.vol = v; }
+        isMuted() { return this.muted; }
+        mute() { this.muted = true; }
+        unMute() { this.muted = false; }
+        getPlaybackRate() { return this.rate; }
+        setPlaybackRate(r) { this.rate = r; this.events.onPlaybackRateChange?.({ data: r }); }
+        playVideo() { this.state = PlayerState.PLAYING; this.events.onStateChange?.({ data: 1 }); }
+        pauseVideo() { this.state = PlayerState.PAUSED; this.events.onStateChange?.({ data: 2 }); }
+        seekTo(t) { this.t = t; }
+        getIframe() { return this.f; }
+        destroy() { this.f.remove(); }
+      }
+      window.YT = { Player: MockPlayer, PlayerState };
+    </script>
+
+    <script type="module">
+      import { NyxPlayer } from '../nyx-player.js';
+
+      const player = new NyxPlayer('#player', { videoId: 'MOCK', volume: 70 });
+      window.nyx = player;
+
+      await new Promise((r) => setTimeout(r, 30));
+
+      // Drive it into a settled "playing, curtain down" state for inspection.
+      player.yt.state = 1;
+      player.yt.t = 42;
+      player._onStateChange({ data: 1 });
+      player.yt.t = 43;
+      player._setMask(false);
+      player._render();
+      player._revealUI();
+
+      // Keep the dock up regardless of the idle timer while screenshotting.
+      clearTimeout(player._idleTimer);
+      player._armIdleTimer = () => {};
+
+      window.__READY__ = true;
+    </script>
+  </body>
+</html>
